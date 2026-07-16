@@ -23,10 +23,7 @@ jobs:
         run: flutter create --platforms=ios --project-name music_player --org com.example .
 
       - name: Apply iOS customizations (File Provider Extension)
-        # フェーズ1: Files.appの側面板に「Music Player」を出現させる最小構成の
-        # File Provider Extension を追加する。
         run: |
-          # 1. Swiftソース + Info.plist を配置
           mkdir -p ios/MusicPlayerFileProvider
           cp ios_addons/FileProvider/FileProviderExtension.swift ios/MusicPlayerFileProvider/
           cp ios_addons/FileProvider/FileProviderItem.swift ios/MusicPlayerFileProvider/
@@ -35,10 +32,8 @@ jobs:
           echo "=== Extension files ==="
           ls -la ios/MusicPlayerFileProvider/
 
-          # 2. メインアプリのAppDelegate.swiftをドメイン登録付き版に置き換え
           cp ios_addons/AppDelegate.swift ios/Runner/AppDelegate.swift
 
-          # 3. PodfileのiOSデプロイターゲットを16.0にバンプ
           if grep -q "^# platform :ios" ios/Podfile; then
             sed -i.bak "s/^# platform :ios.*/platform :ios, '16.0'/" ios/Podfile
           elif grep -q "^platform :ios" ios/Podfile; then
@@ -49,7 +44,6 @@ jobs:
           echo "=== Podfile platform line ==="
           grep 'platform :ios' ios/Podfile
 
-          # 4. Xcodeプロジェクトに拡張機能ターゲットを追加
           ruby ios_addons/patch_xcodeproj.rb
 
       - name: Patch Info.plist (main app)
@@ -63,21 +57,51 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'Music Player'" "$PLIST" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 'Music Player'" "$PLIST"
 
+      - name: Diagnostic - Xcode project targets
+        # v14 追加: パッチ後のプロジェクト状態を確認
+        run: |
+          echo "=== Targets in Runner.xcodeproj ==="
+          ruby -e "require 'xcodeproj'; p = Xcodeproj::Project.open('ios/Runner.xcodeproj'); p.targets.each { |t| puts '  - ' + t.name + ' [' + t.product_type.to_s + ']' }"
+          echo ""
+          echo "=== ios/MusicPlayerFileProvider/ contents ==="
+          ls -la ios/MusicPlayerFileProvider/
+
       - name: Flutter pub get
         run: flutter pub get
 
       - name: Flutter build iOS (no codesign)
+        # v14 変更: continue-on-error は残すが、ログを完全に取れるように
         continue-on-error: true
         id: flutter_build
         run: |
           set -o pipefail
           flutter build ios --release --no-codesign 2>&1 | tee /tmp/flutter_build.log
+          echo "flutter build ios exit code: ${PIPESTATUS[0]}"
 
-      - name: Show build log tail
+      - name: Show FULL build log
+        # v14 変更: tail ではなく全文を表示（xcodebuildエラーが中盤に出る可能性）
         if: always()
         run: |
-          echo "=== Last 100 lines of flutter build log ==="
-          tail -100 /tmp/flutter_build.log || true
+          echo "=== FULL flutter build log ==="
+          if [ -f /tmp/flutter_build.log ]; then
+            wc -l /tmp/flutter_build.log
+            cat /tmp/flutter_build.log
+          else
+            echo "flutter_build.log が存在しません"
+          fi
+
+      - name: Diagnostic - build/ directory state
+        # v14 追加: ビルド結果のディレクトリ構造を詳細に出力
+        if: always()
+        run: |
+          echo "=== build/ directory tree (up to depth 5) ==="
+          find build -maxdepth 5 -type d 2>/dev/null | sort || true
+          echo ""
+          echo "=== Any Runner.app anywhere? ==="
+          find build -name "Runner.app" -type d 2>/dev/null || echo "見つかりません"
+          echo ""
+          echo "=== Any .appex anywhere? ==="
+          find build -name "*.appex" -type d 2>/dev/null || echo "見つかりません"
 
       - name: Locate and verify Runner.app
         id: locate
@@ -96,37 +120,25 @@ jobs:
           fi
           if [ -z "$APP" ] || [ ! -d "$APP" ]; then
             echo "::error::Runner.app が見つかりません"
-            find build -maxdepth 4 -type d 2>/dev/null || true
             exit 1
           fi
 
           echo "=== Runner.app: $APP ==="
           du -sh "$APP"
-          echo ""
-          echo "=== Runner binary ==="
           if [ -f "$APP/Runner" ]; then
             file "$APP/Runner"
           else
             echo "::error::Runner バイナリが欠損しています"
             exit 1
           fi
-          echo ""
-          echo "=== PlugIns/ (拡張機能がここに埋め込まれているはず) ==="
-          if [ -d "$APP/PlugIns" ]; then
-            ls -la "$APP/PlugIns/"
-            if [ -d "$APP/PlugIns/MusicPlayerFileProvider.appex" ]; then
-              echo "✓ File Provider Extension が埋め込まれています"
-              du -sh "$APP/PlugIns/MusicPlayerFileProvider.appex"
-            else
-              echo "::warning::MusicPlayerFileProvider.appex が見つかりません。側面板に出ない可能性があります。"
-            fi
+          if [ -d "$APP/PlugIns/MusicPlayerFileProvider.appex" ]; then
+            echo "✓ File Provider Extension が埋め込まれています"
           else
-            echo "::warning::PlugIns/ ディレクトリがありません。拡張機能が埋め込まれていません。"
+            echo "::warning::MusicPlayerFileProvider.appex が埋め込まれていません"
           fi
-
           echo "app_path=$APP" >> "$GITHUB_OUTPUT"
 
-      - name: Package IPA (dummy folder trick)
+      - name: Package IPA
         run: |
           mkdir -p dummy Payload
           cp -R "${{ steps.locate.outputs.app_path }}" Payload/
@@ -140,9 +152,14 @@ jobs:
           name: music-player-ipa
           path: dummy/
 
-      - name: Upload build log (on failure)
-        if: failure()
+      - name: Upload diagnostic artifacts (always)
+        # v14 追加: 成功・失敗にかかわらず診断情報をアップロード
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-build-log
-          path: /tmp/flutter_build.log
+          name: diagnostic-info
+          path: |
+            /tmp/flutter_build.log
+            ios/Runner.xcodeproj/project.pbxproj
+            ios/Podfile
+            ios/Runner/Info.plist
