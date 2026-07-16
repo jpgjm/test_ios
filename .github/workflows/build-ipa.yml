@@ -34,6 +34,14 @@ jobs:
 
           cp ios_addons/AppDelegate.swift ios/Runner/AppDelegate.swift
 
+          # Phase 2a: App Group entitlements for both Runner and Extension
+          cp ios_addons/entitlements/Runner.entitlements ios/Runner/Runner.entitlements
+          cp ios_addons/entitlements/MusicPlayerFileProvider.entitlements ios/MusicPlayerFileProvider/MusicPlayerFileProvider.entitlements
+          echo "=== Entitlements files ==="
+          ls -la ios/Runner/Runner.entitlements ios/MusicPlayerFileProvider/MusicPlayerFileProvider.entitlements
+          echo "--- Runner.entitlements contents ---"
+          cat ios/Runner/Runner.entitlements
+
           if grep -q "^# platform :ios" ios/Podfile; then
             sed -i.bak "s/^# platform :ios.*/platform :ios, '16.0'/" ios/Podfile
           elif grep -q "^platform :ios" ios/Podfile; then
