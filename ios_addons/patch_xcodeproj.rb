@@ -65,6 +65,7 @@ extension_target.build_configurations.each do |config|
   bs['WRAPPER_EXTENSION']            = 'appex'
   bs['PRODUCT_BUNDLE_IDENTIFIER']    = ext_bundle_id
   bs['INFOPLIST_FILE']               = EXTENSION_DIR + '/Info.plist'
+  bs['CODE_SIGN_ENTITLEMENTS']       = EXTENSION_DIR + '/' + EXTENSION_NAME + '.entitlements'
   bs['IPHONEOS_DEPLOYMENT_TARGET']   = DEPLOYMENT_TGT
   bs['SWIFT_VERSION']                = '5.0'
   bs['TARGETED_DEVICE_FAMILY']       = '1,2'
@@ -97,8 +98,10 @@ raise 'Runner target not found' if runner_target.nil?
 
 runner_target.build_configurations.each do |config|
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = DEPLOYMENT_TGT
+  config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
 end
 puts 'Bumped Runner deployment target to ' + DEPLOYMENT_TGT
+puts 'Set Runner CODE_SIGN_ENTITLEMENTS to Runner/Runner.entitlements'
 
 # --- 5. Add Embed App Extensions build phase to Runner ---
 runner_target.build_phases.dup.each do |phase|
