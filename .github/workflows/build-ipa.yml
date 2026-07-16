@@ -22,7 +22,37 @@ jobs:
       - name: Complete Flutter project (generate ios/ scaffold)
         run: flutter create --platforms=ios --project-name music_player --org com.example .
 
-      - name: Patch Info.plist (file sharing + background audio + display name)
+      - name: Apply iOS customizations (File Provider Extension)
+        # フェーズ1: Files.appの側面板に「Music Player」を出現させる最小構成の
+        # File Provider Extension を追加する。
+        run: |
+          # 1. Swiftソース + Info.plist を配置
+          mkdir -p ios/MusicPlayerFileProvider
+          cp ios_addons/FileProvider/FileProviderExtension.swift ios/MusicPlayerFileProvider/
+          cp ios_addons/FileProvider/FileProviderItem.swift ios/MusicPlayerFileProvider/
+          cp ios_addons/FileProvider/FileProviderEnumerator.swift ios/MusicPlayerFileProvider/
+          cp ios_addons/FileProvider/Info.plist ios/MusicPlayerFileProvider/
+          echo "=== Extension files ==="
+          ls -la ios/MusicPlayerFileProvider/
+
+          # 2. メインアプリのAppDelegate.swiftをドメイン登録付き版に置き換え
+          cp ios_addons/AppDelegate.swift ios/Runner/AppDelegate.swift
+
+          # 3. PodfileのiOSデプロイターゲットを16.0にバンプ
+          if grep -q "^# platform :ios" ios/Podfile; then
+            sed -i.bak "s/^# platform :ios.*/platform :ios, '16.0'/" ios/Podfile
+          elif grep -q "^platform :ios" ios/Podfile; then
+            sed -i.bak "s/^platform :ios,.*/platform :ios, '16.0'/" ios/Podfile
+          else
+            echo "platform :ios, '16.0'" | cat - ios/Podfile > /tmp/podfile.new && mv /tmp/podfile.new ios/Podfile
+          fi
+          echo "=== Podfile platform line ==="
+          grep 'platform :ios' ios/Podfile
+
+          # 4. Xcodeプロジェクトに拡張機能ターゲットを追加
+          ruby ios_addons/patch_xcodeproj.rb
+
+      - name: Patch Info.plist (main app)
         run: |
           PLIST=ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST"
@@ -37,10 +67,6 @@ jobs:
         run: flutter pub get
 
       - name: Flutter build iOS (no codesign)
-        # Runner.xcodeprojの署名パッチは削除。--no-codesignだけで
-        # 十分（Flutter内部でxcodebuildにCODE_SIGNING_ALLOWED=NOを渡す）。
-        # Flutterの最終署名チェックで警告になっても、その時点で
-        # xcodebuildは完了しているのでRunner.appは正しく生成される。
         continue-on-error: true
         id: flutter_build
         run: |
@@ -56,11 +82,6 @@ jobs:
       - name: Locate and verify Runner.app
         id: locate
         run: |
-          echo "=== Runner.app candidates ==="
-          find build -name "Runner.app" -type d 2>/dev/null || true
-          echo ""
-
-          # 優先順にRunner.appを探す
           APP=""
           for candidate in \
             "build/ios/iphoneos/Runner.app" \
@@ -70,42 +91,38 @@ jobs:
               break
             fi
           done
-          # フォールバック: findで最初に見つかったもの
           if [ -z "$APP" ]; then
             APP=$(find build -name "Runner.app" -type d 2>/dev/null | head -1)
           fi
-
           if [ -z "$APP" ] || [ ! -d "$APP" ]; then
             echo "::error::Runner.app が見つかりません"
+            find build -maxdepth 4 -type d 2>/dev/null || true
             exit 1
           fi
 
-          echo "=== Using: $APP ==="
-          echo "Total size: $(du -sh "$APP" | cut -f1)"
+          echo "=== Runner.app: $APP ==="
+          du -sh "$APP"
           echo ""
-          echo "=== Contents (top level) ==="
-          ls -la "$APP"
-          echo ""
-
-          # Runner バイナリの存在確認
-          if [ ! -f "$APP/Runner" ]; then
-            echo "::error::Runner バイナリが見つかりません（$APP/Runner）"
-            echo "ビルドが Compile Sources / Link Binary フェーズを完了していません。"
-            exit 1
-          fi
           echo "=== Runner binary ==="
-          file "$APP/Runner"
-          ls -lh "$APP/Runner"
-          echo ""
-
-          # Frameworks フォルダの存在確認
-          if [ ! -d "$APP/Frameworks" ]; then
-            echo "::error::Frameworks/ が見つかりません（$APP/Frameworks）"
-            echo "Embed Frameworks フェーズが完了していません。"
+          if [ -f "$APP/Runner" ]; then
+            file "$APP/Runner"
+          else
+            echo "::error::Runner バイナリが欠損しています"
             exit 1
           fi
-          echo "=== Frameworks ==="
-          ls -la "$APP/Frameworks/"
+          echo ""
+          echo "=== PlugIns/ (拡張機能がここに埋め込まれているはず) ==="
+          if [ -d "$APP/PlugIns" ]; then
+            ls -la "$APP/PlugIns/"
+            if [ -d "$APP/PlugIns/MusicPlayerFileProvider.appex" ]; then
+              echo "✓ File Provider Extension が埋め込まれています"
+              du -sh "$APP/PlugIns/MusicPlayerFileProvider.appex"
+            else
+              echo "::warning::MusicPlayerFileProvider.appex が見つかりません。側面板に出ない可能性があります。"
+            fi
+          else
+            echo "::warning::PlugIns/ ディレクトリがありません。拡張機能が埋め込まれていません。"
+          fi
 
           echo "app_path=$APP" >> "$GITHUB_OUTPUT"
 
@@ -115,10 +132,7 @@ jobs:
           cp -R "${{ steps.locate.outputs.app_path }}" Payload/
           zip -r dummy/music_player.ipa Payload
           rm -rf Payload
-          echo "=== IPA info ==="
           ls -lh dummy/music_player.ipa
-          echo "Uncompressed size:"
-          unzip -l dummy/music_player.ipa | tail -1
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
