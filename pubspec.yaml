@@ -1,0 +1,27 @@
+name: music_player
+description: "Offline music player with iTunes/Apple Music library integration"
+publish_to: 'none'
+version: 1.5.0+8
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  just_audio: any
+  just_audio_background: any
+  path_provider: ^2.1.0
+  path: ^1.8.0
+  url_launcher: ^6.2.0
+  # iOSの MPMediaLibrary/MPMediaQuery 経由でユーザーの
+  # iTunes/Apple Music ライブラリを参照するためのプラグイン
+  on_audio_query: ^2.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
