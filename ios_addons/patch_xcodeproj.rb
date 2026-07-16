@@ -13,12 +13,27 @@ require 'xcodeproj'
 PROJECT_PATH   = 'ios/Runner.xcodeproj'
 EXTENSION_NAME = 'MusicPlayerFileProvider'
 EXTENSION_DIR  = EXTENSION_NAME
-MAIN_BUNDLE_ID = 'com.example.music_player'
-EXT_BUNDLE_ID  = MAIN_BUNDLE_ID + '.FileProvider'
+FALLBACK_BUNDLE_ID = 'com.example.musicPlayer'  # only used if Runner has a $(VAR) reference
 DEPLOYMENT_TGT = '16.0'
 
 puts 'Opening ' + PROJECT_PATH + ' ...'
 project = Xcodeproj::Project.open(PROJECT_PATH)
+
+# Determine the main app's bundle ID by reading from Runner target's
+# Release config. Flutter converts "music_player" to "musicPlayer"
+# (camelCase) so hardcoding the constant would break the required
+# "extension bundle ID must be prefixed with parent" rule.
+runner_target_early = project.targets.find { |t| t.name == 'Runner' }
+raise 'Runner target not found' if runner_target_early.nil?
+runner_release = runner_target_early.build_configurations.find { |c| c.name == 'Release' }
+main_bundle_id = runner_release && runner_release.build_settings['PRODUCT_BUNDLE_IDENTIFIER']
+if main_bundle_id.nil? || main_bundle_id.include?('$(')
+  puts 'WARN: Could not read Runner PRODUCT_BUNDLE_IDENTIFIER, falling back to ' + FALLBACK_BUNDLE_ID
+  main_bundle_id = FALLBACK_BUNDLE_ID
+end
+ext_bundle_id = main_bundle_id + '.FileProvider'
+puts 'Main app bundle ID: ' + main_bundle_id
+puts 'Extension bundle ID: ' + ext_bundle_id
 
 # --- Idempotency: remove existing extension target if present ---
 existing = project.targets.find { |t| t.name == EXTENSION_NAME }
@@ -48,7 +63,7 @@ extension_target.build_configurations.each do |config|
   #   "Multiple commands produce '.../Release-iphoneos/.appex'"
   bs['PRODUCT_NAME']                 = EXTENSION_NAME
   bs['WRAPPER_EXTENSION']            = 'appex'
-  bs['PRODUCT_BUNDLE_IDENTIFIER']    = EXT_BUNDLE_ID
+  bs['PRODUCT_BUNDLE_IDENTIFIER']    = ext_bundle_id
   bs['INFOPLIST_FILE']               = EXTENSION_DIR + '/Info.plist'
   bs['IPHONEOS_DEPLOYMENT_TARGET']   = DEPLOYMENT_TGT
   bs['SWIFT_VERSION']                = '5.0'
