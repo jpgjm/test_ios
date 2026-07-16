@@ -43,6 +43,11 @@ extension_target = project.new_target(
 # --- 2. Configure build settings ---
 extension_target.build_configurations.each do |config|
   bs = config.build_settings
+  # Explicitly set PRODUCT_NAME. Without this, Xcode produces a file
+  # named just ".appex" (empty product name) which causes the error:
+  #   "Multiple commands produce '.../Release-iphoneos/.appex'"
+  bs['PRODUCT_NAME']                 = EXTENSION_NAME
+  bs['WRAPPER_EXTENSION']            = 'appex'
   bs['PRODUCT_BUNDLE_IDENTIFIER']    = EXT_BUNDLE_ID
   bs['INFOPLIST_FILE']               = EXTENSION_DIR + '/Info.plist'
   bs['IPHONEOS_DEPLOYMENT_TARGET']   = DEPLOYMENT_TGT
