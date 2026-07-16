@@ -100,6 +100,28 @@ embed_phase.dst_path = ''
 build_file = embed_phase.add_file_reference(extension_target.product_reference)
 build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
 
+# new_copy_files_build_phase appends to the END of build phases. If it stays
+# there (after Flutter's "Thin Binary" script phase), Xcode's dependency
+# graph detects a build cycle:
+#   Copy PlugIns -> Thin Binary -> Info.plist -> Copy PlugIns
+# Move Embed App Extensions to BEFORE Thin Binary to break the cycle.
+phases = runner_target.build_phases
+thin_binary_idx = phases.index do |phase|
+  phase.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase) &&
+    phase.respond_to?(:name) && phase.name.to_s.include?('Thin Binary')
+end
+
+if thin_binary_idx
+  current_idx = phases.index(embed_phase)
+  if current_idx && current_idx > thin_binary_idx
+    phases.delete(embed_phase)
+    phases.insert(thin_binary_idx, embed_phase)
+    puts 'Moved Embed App Extensions phase to index ' + thin_binary_idx.to_s + ' (before Thin Binary)'
+  end
+else
+  puts 'WARNING: Thin Binary script phase not found; Embed App Extensions remains at end'
+end
+
 runner_target.add_dependency(extension_target)
 puts 'Added Runner -> ' + EXTENSION_NAME + ' dependency'
 
